@@ -1,6 +1,6 @@
 import { Plugin, Path, isAsyncIterable, DefaultContext } from '@envelop/core';
 import { useOnResolve } from '@envelop/on-resolve';
-import { print, FieldNode, Kind, OperationDefinitionNode, ExecutionResult, GraphQLError } from 'graphql';
+import { print, FieldNode, Kind, ExecutionResult, GraphQLError, DocumentNode, Source, getOperationAST } from 'graphql';
 import newRelic from 'newrelic';
 
 enum AttributeName {
@@ -70,6 +70,8 @@ export const useNewRelic = (rawOptions?: UseNewRelicOptions): Plugin => {
   const logger = instrumentationApi.logger.child({ component: AttributeName.COMPONENT_NAME });
   logger.info(`${AttributeName.COMPONENT_NAME} registered`);
 
+  const documentSourceMap = new WeakMap<DocumentNode, string>();
+
   return {
     onPluginInit({ addPlugin }) {
       if (options.trackResolvers) {
@@ -116,11 +118,23 @@ export const useNewRelic = (rawOptions?: UseNewRelicOptions): Plugin => {
         );
       }
     },
+    onParse({ params: { source } }) {
+      return ({ result }) => {
+        if (options.includeOperationDocument) {
+          const key = source instanceof Source ? source.body : source;
+
+          if (!result || result instanceof Error) return;
+
+          documentSourceMap.set(result, key);
+        }
+      };
+    },
     onExecute({ args }) {
-      const rootOperation = args.document.definitions.find(
-        // @ts-expect-error TODO: not sure how we will make it dev friendly
-        definitionNode => definitionNode.kind === Kind.OPERATION_DEFINITION
-      ) as OperationDefinitionNode;
+      const rootOperation = getOperationAST(args.document, args.operationName);
+      if (!rootOperation) {
+        logger.trace('No root operation found. Not recording transaction.');
+        return;
+      }
       const operationType = rootOperation.operation;
       const operationName =
         options.extractOperationName?.(args.contextValue) ||
@@ -161,7 +175,10 @@ export const useNewRelic = (rawOptions?: UseNewRelicOptions): Plugin => {
       spanContext?.addCustomAttribute(AttributeName.EXECUTION_OPERATION_NAME, operationName);
       spanContext?.addCustomAttribute(AttributeName.EXECUTION_OPERATION_TYPE, operationType);
       options.includeOperationDocument &&
-        spanContext?.addCustomAttribute(AttributeName.EXECUTION_OPERATION_DOCUMENT, print(args.document));
+        spanContext?.addCustomAttribute(
+          AttributeName.EXECUTION_OPERATION_DOCUMENT,
+          documentSourceMap.get(args.document) ?? print(args.document)
+        );
 
       if (options.includeExecuteVariables) {
         const rawVariables = args.variableValues || {};
