@@ -1,6 +1,7 @@
 import { Plugin, Path, isAsyncIterable, DefaultContext } from '@envelop/core';
 import { useOnResolve } from '@envelop/on-resolve';
 import { print, FieldNode, Kind, OperationDefinitionNode, ExecutionResult, GraphQLError } from 'graphql';
+import newRelic from 'newrelic';
 
 enum AttributeName {
   COMPONENT_NAME = 'Envelop_NewRelic_Plugin',
@@ -57,36 +58,26 @@ export const useNewRelic = (rawOptions?: UseNewRelicOptions): Plugin => {
   };
   options.isExecuteVariablesRegex = options.includeExecuteVariables instanceof RegExp;
   options.isResolverArgsRegex = options.includeResolverArgs instanceof RegExp;
-  const instrumentationApi$ = import('newrelic')
-    .then(m => m.default || m)
-    .then(({ shim }) => {
-      if (!shim?.agent) {
-        throw new Error(
-          'Agent unavailable. Please check your New Relic Agent configuration and ensure New Relic is enabled.'
-        );
-      }
-      shim.agent.metrics
-        .getOrCreateMetric(`Supportability/ExternalModules/${AttributeName.COMPONENT_NAME}`)
-        .incrementCallCount();
-      return shim;
-    });
+  const instrumentationApi = newRelic?.shim;
+  if (!instrumentationApi?.agent) {
+    console.warn('Agent unavailable. Please check your New Relic Agent configuration and ensure New Relic is enabled.');
+    return {};
+  }
+  instrumentationApi.agent.metrics
+    .getOrCreateMetric(`Supportability/ExternalModules/${AttributeName.COMPONENT_NAME}`)
+    .incrementCallCount();
 
-  const logger$ = instrumentationApi$.then(({ logger }) => {
-    const childLogger = logger.child({ component: AttributeName.COMPONENT_NAME });
-    childLogger.info(`${AttributeName.COMPONENT_NAME} registered`);
-    return childLogger;
-  });
+  const logger = instrumentationApi.logger.child({ component: AttributeName.COMPONENT_NAME });
+  logger.info(`${AttributeName.COMPONENT_NAME} registered`);
 
   return {
     onPluginInit({ addPlugin }) {
       if (options.trackResolvers) {
         addPlugin(
-          useOnResolve(async ({ args: resolversArgs, info }) => {
-            const instrumentationApi = await instrumentationApi$;
+          useOnResolve(({ args: resolversArgs, info }) => {
             const transactionNameState = instrumentationApi.agent.tracer.getTransaction().nameState;
             const delimiter = transactionNameState.delimiter;
 
-            const logger = await logger$;
             const { returnType, path, parentType } = info;
             const formattedPath = flattenPath(path, delimiter);
             const currentSegment = instrumentationApi.getActiveSegment();
@@ -125,42 +116,52 @@ export const useNewRelic = (rawOptions?: UseNewRelicOptions): Plugin => {
         );
       }
     },
-    async onExecute({ args }) {
-      const instrumentationApi = await instrumentationApi$;
-      const transactionNameState = instrumentationApi.agent.tracer.getTransaction().nameState;
-      const spanContext = instrumentationApi.agent.tracer.getSpanContext();
-      const delimiter = transactionNameState.delimiter;
+    onExecute({ args }) {
       const rootOperation = args.document.definitions.find(
         // @ts-expect-error TODO: not sure how we will make it dev friendly
         definitionNode => definitionNode.kind === Kind.OPERATION_DEFINITION
       ) as OperationDefinitionNode;
       const operationType = rootOperation.operation;
-      const document = print(args.document);
       const operationName =
         options.extractOperationName?.(args.contextValue) ||
         args.operationName ||
         rootOperation.name?.value ||
         AttributeName.ANONYMOUS_OPERATION;
-      let rootFields: string[] | null = null;
 
-      if (options.rootFieldsNaming) {
-        const fieldNodes = rootOperation.selectionSet.selections.filter(
-          selectionNode => selectionNode.kind === Kind.FIELD
-        ) as FieldNode[];
-        rootFields = fieldNodes.map(fieldNode => fieldNode.name.value);
+      const transaction = instrumentationApi.agent.tracer.getTransaction();
+      const transactionNameState = transaction?.nameState;
+      if (transactionNameState) {
+        const delimiter = transactionNameState.delimiter || '/';
+        let rootFields: string[] | null = null;
+
+        if (options.rootFieldsNaming) {
+          const fieldNodes = rootOperation.selectionSet.selections.filter(
+            selectionNode => selectionNode.kind === Kind.FIELD
+          ) as FieldNode[];
+          rootFields = fieldNodes.map(fieldNode => fieldNode.name.value);
+        }
+
+        const operationType = rootOperation.operation;
+        const operationName =
+          options.extractOperationName?.(args.contextValue) ||
+          args.operationName ||
+          rootOperation.name?.value ||
+          AttributeName.ANONYMOUS_OPERATION;
+
+        transactionNameState.setName(
+          transactionNameState.prefix,
+          transactionNameState.verb,
+          delimiter,
+          operationType + delimiter + operationName + (rootFields ? delimiter + rootFields.join('&') : '')
+        );
       }
 
-      transactionNameState.setName(
-        transactionNameState.prefix,
-        transactionNameState.verb,
-        delimiter,
-        operationType + delimiter + operationName + (rootFields ? delimiter + rootFields.join('&') : '')
-      );
+      const spanContext = instrumentationApi.agent.tracer.getSpanContext();
 
-      spanContext.addCustomAttribute(AttributeName.EXECUTION_OPERATION_NAME, operationName);
-      spanContext.addCustomAttribute(AttributeName.EXECUTION_OPERATION_TYPE, operationType);
+      spanContext?.addCustomAttribute(AttributeName.EXECUTION_OPERATION_NAME, operationName);
+      spanContext?.addCustomAttribute(AttributeName.EXECUTION_OPERATION_TYPE, operationType);
       options.includeOperationDocument &&
-        spanContext.addCustomAttribute(AttributeName.EXECUTION_OPERATION_DOCUMENT, document);
+        spanContext?.addCustomAttribute(AttributeName.EXECUTION_OPERATION_DOCUMENT, print(args.document));
 
       if (options.includeExecuteVariables) {
         const rawVariables = args.variableValues || {};
@@ -168,7 +169,7 @@ export const useNewRelic = (rawOptions?: UseNewRelicOptions): Plugin => {
           ? filterPropertiesByRegex(rawVariables, options.includeExecuteVariables as RegExp)
           : rawVariables;
 
-        spanContext.addCustomAttribute(AttributeName.EXECUTION_VARIABLES, JSON.stringify(executeVariablesToTrack));
+        spanContext?.addCustomAttribute(AttributeName.EXECUTION_VARIABLES, JSON.stringify(executeVariablesToTrack));
       }
 
       const operationSegment = instrumentationApi.getActiveSegment();
@@ -177,16 +178,18 @@ export const useNewRelic = (rawOptions?: UseNewRelicOptions): Plugin => {
         onExecuteDone({ result }) {
           const sendResult = (singularResult: ExecutionResult) => {
             if (singularResult.data && options.includeRawResult) {
-              spanContext.addCustomAttribute(AttributeName.EXECUTION_RESULT, JSON.stringify(singularResult));
+              spanContext?.addCustomAttribute(AttributeName.EXECUTION_RESULT, JSON.stringify(singularResult));
             }
 
             if (singularResult.errors && singularResult.errors.length > 0) {
               const agent = instrumentationApi.agent;
               const transaction = instrumentationApi.tracer.getTransaction();
 
-              for (const error of singularResult.errors) {
-                if (options.skipError?.(error)) continue;
-                agent.errors.add(transaction, JSON.stringify(error));
+              if (transaction) {
+                for (const error of singularResult.errors) {
+                  if (options.skipError?.(error)) continue;
+                  agent.errors.add(transaction, JSON.stringify(error));
+                }
               }
             }
           };
@@ -196,12 +199,12 @@ export const useNewRelic = (rawOptions?: UseNewRelicOptions): Plugin => {
                 sendResult(singularResult);
               },
               onEnd: () => {
-                operationSegment.end();
+                operationSegment?.end();
               },
             };
           }
           sendResult(result);
-          operationSegment.end();
+          operationSegment?.end();
           return {};
         },
       };
