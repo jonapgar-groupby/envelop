@@ -34,6 +34,7 @@
     "test": "jest",
     "test:core": "jest ./packages/core --coverage",
     "test:ci": "jest --coverage",
+    "test:newrelic": "yarn workspace @envelop/newrelic test",
     "prerelease": "yarn build",
     "release": "changeset publish",
     "loadtest:start-server": "NODE_ENV=production node ./benchmark/app.js",
