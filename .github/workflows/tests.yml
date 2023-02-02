@@ -71,8 +71,6 @@ jobs:
         run: yarn test
         env:
           CI: true
-      - name: Test NewRelic
-        run: yarn test:newrelic
 
   core:
     name: Core Test / ${{matrix.os}} / node v${{matrix.node-version}} / graphql v${{matrix.graphql_version}}

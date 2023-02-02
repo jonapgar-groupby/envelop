@@ -3,7 +3,7 @@ import { useOnResolve } from '@envelop/on-resolve';
 import { print, FieldNode, Kind, ExecutionResult, GraphQLError, DocumentNode, Source, getOperationAST } from 'graphql';
 import newRelic from 'newrelic';
 
-enum AttributeName {
+export enum AttributeName {
   COMPONENT_NAME = 'Envelop_NewRelic_Plugin',
   ANONYMOUS_OPERATION = '<anonymous>',
   EXECUTION_RESULT = 'graphql.execute.result',
