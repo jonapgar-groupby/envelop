@@ -157,11 +157,6 @@ export const useNewRelic = (rawOptions?: UseNewRelicOptions): Plugin => {
         }
 
         const operationType = rootOperation.operation;
-        const operationName =
-          options.extractOperationName?.(args.contextValue) ||
-          args.operationName ||
-          rootOperation.name?.value ||
-          AttributeName.ANONYMOUS_OPERATION;
 
         transactionNameState.setName(
           transactionNameState.prefix,
