@@ -34,6 +34,8 @@ export type UseNewRelicOptions = {
    * By default, this plugin skips all `Error` errors and does not report them to NewRelic.
    */
   skipError?: (error: GraphQLError) => boolean;
+
+  shim?: any;
 };
 
 interface InternalOptions extends UseNewRelicOptions {
@@ -58,7 +60,7 @@ export const useNewRelic = (rawOptions?: UseNewRelicOptions): Plugin => {
   };
   options.isExecuteVariablesRegex = options.includeExecuteVariables instanceof RegExp;
   options.isResolverArgsRegex = options.includeResolverArgs instanceof RegExp;
-  const instrumentationApi = newRelic?.shim;
+  const instrumentationApi = rawOptions?.shim || newRelic?.shim;
   if (!instrumentationApi?.agent) {
     // eslint-disable-next-line no-console
     console.warn('Agent unavailable. Please check your New Relic Agent configuration and ensure New Relic is enabled.');
