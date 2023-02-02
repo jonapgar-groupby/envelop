@@ -68,5 +68,6 @@
   "publishConfig": {
     "directory": "dist",
     "access": "public"
-  }
+  },
+  "type": "module"
 }
