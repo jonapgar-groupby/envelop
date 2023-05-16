@@ -1,5 +1,19 @@
 # @envelop/sentry
 
+## 5.1.2
+
+### Patch Changes
+
+- [#1728](https://github.com/n1ru4l/envelop/pull/1728)
+  [`a36925c7`](https://github.com/n1ru4l/envelop/commit/a36925c7df0538f88b51682e4e23f4b16f6fae2b)
+  Thanks [@ardatan](https://github.com/ardatan)! - - Memoize parsed document string result and use
+  it wherever possible, and export `getDocumentString` function to allow users to use it as well.
+  - Use `WeakMap`s with `DocumentNode` wherever possible instead of using LRU Cache with strings. It
+    is more optimal if a parser caching is used
+- Updated dependencies
+  [[`a36925c7`](https://github.com/n1ru4l/envelop/commit/a36925c7df0538f88b51682e4e23f4b16f6fae2b)]:
+  - @envelop/core@3.0.7
+
 ## 5.1.1
 
 ### Patch Changes
